@@ -4,15 +4,18 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_openai import ChatOpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langsmith import Client
 
 load_dotenv()
 
 class PromptAgent:
-    def __init__(self, system_instruction, collection_name="langchain_knowledge", qdrant_path="./qdrant_db"):
+    def __init__(self, system_instruction, collection_name="prompt_agente_knowledge", qdrant_path="./qdrant_db"):
         self.system_instruction = system_instruction
         self.embedding_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
@@ -20,7 +23,7 @@ class PromptAgent:
         os.makedirs(qdrant_path, exist_ok=True)
         
         # Inicializar QDrant com armazenamento persistente
-        self.qdrant_client = QdrantClient(path=qdrant_path)
+        self.qdrant_client = QdrantClient(host="localhost", port=6338)
         self.collection_name = collection_name
 
         self._setup_vector_store()
@@ -43,7 +46,7 @@ class PromptAgent:
     def add_knowledge_from_file(self, file_path):
         loader = TextLoader(file_path, encoding="utf-8")
         docs = loader.load()
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        text_splitter = SemanticChunker(OpenAIEmbeddings())
         texts = text_splitter.create_documents([docs[0].page_content])
         self.vectorstore.add_documents(texts)
         print(f"Conhecimento de {file_path} adicionado à base de dados persistente.")
@@ -54,7 +57,7 @@ class PromptAgent:
             llm=self.llm,
             retriever=retriever,
             chain_type="stuff",
-            return_source_documents=False,
+            return_source_documents=True,
             chain_type_kwargs={
                 "prompt": self._build_custom_prompt()
             }
@@ -87,11 +90,15 @@ class PromptAgent:
 
 # Exemplo de uso
 if __name__ == "__main__":
-    agent = PromptAgent("Você é um especialista em gerar prompts otimizados para modelos de linguagem.")
+    client = Client()
+    prompt = client.pull_prompt("gerador-prompt", include_model=True)
+    system_instruction = prompt.first.messages[0].prompt.template
+    agent = PromptAgent(system_instruction)
 
     # Adicionar conhecimento (só será adicionado se ainda não estiver na base)
     agent.add_knowledge_from_file("teste.txt")
 
     entrada = "Crie um prompt para gerar um avatar 3D realista para um jogo de fantasia."
     resposta = agent.generate_prompt(entrada)
-    print(resposta["result"])  # Acesso correto ao resultado
+    print("Resposta do agente:")
+    print(resposta['result'])  # Acesso correto ao resultado
